@@ -548,7 +548,7 @@ var E = (typeof Engine !== 'undefined') ? Engine : require('./engine.js');
 var HAS_DOM = typeof document !== 'undefined';
 
 var DEF = {
-  cfg: { v: 3, balance0: 350, riskPct: 0.5, maxOpenRiskPct: 1, dailyLoss: 5, dailyTarget: 6.5, leverage: 5, fee: 0.06, minScore: 70, tf: '15m', perpUrl: '', auto: false, scanOnOpen: true, watch: ['BTC', 'ZEC', 'ADA', 'DOGE', 'AVAX', 'FIL', 'DOT', 'XLM', 'XRP', 'SOL', 'ICP', 'BNB', 'HYPE', 'LINK'] },
+  cfg: { v: 3, balance0: 350, riskPct: 0.5, maxOpenRiskPct: 1, dailyLoss: 5, dailyTarget: 6.5, leverage: 5, fee: 0.06, minScore: 70, tf: '15m', auto: false, scanOnOpen: true, watch: ['BTC', 'ZEC', 'ADA', 'DOGE', 'AVAX', 'FIL', 'DOT', 'XLM', 'XRP', 'SOL', 'ICP', 'BNB', 'HYPE', 'LINK'] },
   trades: [], pos: [], manual: [], news: null
 };
 var st = load();
@@ -594,112 +594,50 @@ function qtyFmt(q) { return q >= 100 ? q.toFixed(0) : q >= 1 ? q.toFixed(2) : q.
 function baseOf(s) { var b = String(s).toUpperCase().replace(/[^A-Z0-9]/g, ''); b = b.replace(/USDT$/, ''); return b; }
 
 /* ---------- market data ---------- */
-var LB_T = { '5m': 'minute5', '15m': 'minute15', '30m': 'minute30', '1h': 'hour1', '4h': 'hour4' };
+var BN_T = { '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h' };
 var cache = {};
-function rawJSON(url, ms) {
+function getJSON(url, ms) {
   return new Promise(function (resolve, reject) {
     var done = false;
-    var to = setTimeout(function () { if (!done) { done = true; reject(new Error('timeout')); } }, ms || 12000);
+    var to = setTimeout(function () { if (!done) { done = true; reject(new Error('timeout')); } }, ms || 10000);
     var fin = function (fn, v) { if (!done) { done = true; clearTimeout(to); fn(v); } };
     try {
       fetch(url).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(function (j) { fin(resolve, j); }, function (e) { fin(reject, e); });
     } catch (e) { fin(reject, e); }
   });
 }
-/* direct first; if the browser blocks it (CORS / filtering), try public relay routes. Only public market data goes through them. */
-var VIA = [function (u) { return u; }, function (u) { return 'https://corsproxy.io/?url=' + encodeURIComponent(u); }, function (u) { return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u); }];
-var viaOk = 0;
-function relayUrl(u) { var r = (st.cfg.relay || '').trim(); return r ? r + (r.indexOf('?') < 0 ? '?' : '&') + 'url=' + encodeURIComponent(u) : null; }
-function getJSON(url, ms) {
-  var order = (st.cfg.relay || '').trim() ? [3, 0, 1, 2] : [viaOk].concat([0, 1, 2].filter(function (x) { return x !== viaOk; }));
-  var first = null;
-  function go(i) {
-    if (i >= order.length) return Promise.reject(first || new Error('fetch failed'));
-    var k = order[i];
-    return rawJSON(k === 3 ? relayUrl(url) : VIA[k](url), ms).then(function (d) { if (k !== 3) viaOk = k; return d; }, function (e) { if (!first) first = e; if (/^HTTP 4(04|10)/.test(String(e && e.message)) && k === 0) return Promise.reject(e); return go(i + 1); });
-  }
-  return go(0);
-}
 function clean(a) {
   var out = a.filter(function (c) { return isFinite(c.t) && isFinite(c.o) && isFinite(c.h) && isFinite(c.l) && isFinite(c.c) && c.h >= c.l; });
   out.sort(function (x, y) { return x.t - y.t; });
   return out.filter(function (c, i) { return i === 0 || c.t !== out[i - 1].t; });
 }
-function spotCandles(b, tf) {
-  var start = Math.floor(Date.now() / 1000) - 330 * E.TF_SEC[tf];
-  return getJSON('https://api.lbkex.com/v2/kline.do?symbol=' + b.toLowerCase() + '_usdt&size=400&type=' + LB_T[tf] + '&time=' + start).then(function (d) {
-    if (!d || !Array.isArray(d.data)) throw new Error('پاسخ نامعتبر');
-    return clean(d.data.map(function (x) { return { t: +x[0] * 1000, o: +x[1], h: +x[2], l: +x[3], c: +x[4], v: +x[5] }; }));
-  });
-}
-var BN_T = { '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h' };
 function binanceCandles(b, tf) {
-  return getJSON('https://fapi.binance.com/fapi/v1/klines?symbol=' + b + 'USDT&interval=' + BN_T[tf] + '&limit=330', 12000).then(function (d) {
+  return getJSON('https://fapi.binance.com/fapi/v1/klines?symbol=' + b + 'USDT&interval=' + BN_T[tf] + '&limit=330', 10000).then(function (d) {
     if (!Array.isArray(d)) throw new Error('پاسخ نامعتبر');
     return clean(d.map(function (x) { return { t: +x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], v: +x[5] }; }));
   });
 }
-function parseCandles(d) {
-  var arr = Array.isArray(d) ? d : (d && (Array.isArray(d.data) ? d.data : (d.data && Array.isArray(d.data.list) ? d.data.list : (Array.isArray(d.result) ? d.result : (d.result && Array.isArray(d.result.list) ? d.result.list : null)))));
-  if (!arr || arr.length < 80) return null;
-  var out = arr.map(function (x) {
-    var t, o, h, l, c, v;
-    if (Array.isArray(x)) { t = +x[0]; o = +x[1]; h = +x[2]; l = +x[3]; c = +x[4]; v = +x[5]; }
-    else if (x && typeof x === 'object') { t = +(x.t != null ? x.t : x.time != null ? x.time : x.timestamp != null ? x.timestamp : x.openTime != null ? x.openTime : x.id); o = +(x.o != null ? x.o : x.open); h = +(x.h != null ? x.h : x.high); l = +(x.l != null ? x.l : x.low); c = +(x.c != null ? x.c : x.close); v = +(x.v != null ? x.v : x.volume); }
-    else return null;
-    if (t < 1e11) t *= 1000;
-    return { t: t, o: o, h: h, l: l, c: c, v: v };
-  });
-  if (out.some(function (c) { return !c; })) return null;
-  out = clean(out);
-  if (out.length < 80) return null;
-  var bad = out.filter(function (c) { return c.h < Math.max(c.o, c.c) * (1 - 1e-9) || c.l > Math.min(c.o, c.c) * (1 + 1e-9); }).length;
-  return bad > out.length * 0.02 ? null : out;
-}
-function customCandles(b, tf) {
-  var tpl = (st.cfg.perpUrl || '').trim(), start = Math.floor(Date.now() / 1000) - 330 * E.TF_SEC[tf];
-  var url = tpl.replace(/\{symbol\}/g, b + 'USDT').replace(/\{base\}/g, b).replace(/\{tf\}/g, tf).replace(/\{tfmin\}/g, String(E.TF_SEC[tf] / 60)).replace(/\{tflb\}/g, LB_T[tf]).replace(/\{limit\}/g, '330').replace(/\{start\}/g, String(start)).replace(/\{startms\}/g, String(start * 1000));
-  if (!/^https:\/\//.test(url)) return Promise.reject(new Error('آدرس سفارشی باید با https شروع بشه'));
-  return getJSON(url, 12000).then(function (d) { var c = parseCandles(d); if (!c) throw new Error('فرمت کندل‌ها قابل‌فهم نیست'); return c; });
-}
-var lbDead = 0;
 function candles(b, tf) {
-  var tpl = (st.cfg.perpUrl || '').trim(), key = b + tf + '|' + tpl, hit = cache[key];
+  var key = b + tf, hit = cache[key];
   var ttl = tf === '4h' ? 900000 : tf === '1h' ? 300000 : 45000;
   if (hit && Date.now() - hit.at < ttl) return Promise.resolve(hit.v);
-  if (lbDead && Date.now() - lbDead < 60000) return Promise.reject(new Error('timeout'));
-  var first = tpl ? customCandles(b, tf).then(function (c) { return { c: c, src: 'perp' }; }, function () { return null; }) : Promise.resolve(null);
-  return first.then(function (res) {
-    return res || spotCandles(b, tf).then(function (c) { return { c: c, src: 'spot' }; }, function (e1) { return binanceCandles(b, tf).then(function (c) { return { c: c, src: 'binance' }; }, function () { throw e1; }); });
-  }).then(function (v) {
-    if (v.c.length < 80) throw new Error('داده کم');
-    cache[key] = { at: Date.now(), v: v }; return v;
-  }, function (e) {
-    if (/timeout|fetch|network|load failed|cloned/i.test(String(e && e.message))) lbDead = Date.now();
-    throw e;
+  return binanceCandles(b, tf).then(function (c) {
+    if (c.length < 80) throw new Error('داده کم');
+    var v = { c: c, src: 'binance' }; cache[key] = { at: Date.now(), v: v }; return v;
   });
 }
 
-var perpCache = { at: 0, map: null, src: '' };
+var perpCache = { at: 0, map: null, src: 'binance' };
 function perpMap() {
-  if (perpCache.map && Date.now() - perpCache.at < 20000) return Promise.resolve(perpCache.map);
-  return getJSON('https://lbkperp.lbank.com/cfd/openApi/v1/pub/marketData?productGroup=SwapU', 9000).then(function (d) {
-    var arr = Array.isArray(d) ? d : (d && Array.isArray(d.data) ? d.data : null);
-    if (!arr) throw new Error('پاسخ نامعتبر');
+  if (perpCache.map && Date.now() - perpCache.at < 15000) return Promise.resolve(perpCache.map);
+  return getJSON('https://fapi.binance.com/fapi/v1/ticker/price', 9000).then(function (d) {
+    if (!Array.isArray(d)) throw new Error('پاسخ نامعتبر');
     var m = {};
-    arr.forEach(function (x) { if (x && x.symbol) m[String(x.symbol).toUpperCase().replace(/[^A-Z0-9]/g, '')] = { last: +x.lastPrice, mark: +x.markedPrice }; });
-    perpCache = { at: Date.now(), map: m, src: 'lbank' }; return m;
-  }).catch(function (e) {
-    return getJSON('https://fapi.binance.com/fapi/v1/ticker/price', 9000).then(function (d) {
-      if (!Array.isArray(d)) throw e;
-      var m = {};
-      d.forEach(function (x) { if (x && x.symbol) m[String(x.symbol).toUpperCase()] = { last: +x.price, mark: +x.price }; });
-      if (!Object.keys(m).length) throw e;
-      perpCache = { at: Date.now(), map: m, src: 'binance' }; return m;
-    }, function () { throw e; });
+    d.forEach(function (x) { if (x && x.symbol && isFinite(+x.price)) m[String(x.symbol).toUpperCase()] = { last: +x.price, mark: +x.price }; });
+    if (!Object.keys(m).length) throw new Error('پاسخ خالی');
+    perpCache = { at: Date.now(), map: m, src: 'binance' }; return m;
   });
 }
-function lbankPerp(b) { return perpMap().then(function (m) { return m[b + 'USDT'] || null; }, function () { return null; }); }
 function livePrice(sym) {
   var m = perpCache.map, q = m && m[sym + 'USDT'];
   return (q && isFinite(q.last) && q.last > 0 && Date.now() - perpCache.at < 120000) ? q.last : null;
@@ -728,7 +666,6 @@ function loadNews(force) {
 
 
 /* ---------- analysis flow ---------- */
-function scaleC(arr, k) { return arr.map(function (c) { return { t: c.t, o: c.o * k, h: c.h * k, l: c.l * k, c: c.c * k, v: c.v }; }); }
 function btcBias() {
   return Promise.all([candles('BTC', '4h'), candles('BTC', '1h')]).then(function (r) {
     var cb = E.combineBias(E.biasOf(r[0].c), E.biasOf(r[1].c));
@@ -737,29 +674,18 @@ function btcBias() {
 }
 function analyzeSym(b, tfo) {
   var tf = tfo || st.cfg.tf;
-  return Promise.all([candles(b, tf), perpMap().then(function (m) { return { m: m }; }, function () { return { m: null }; })]).then(function (x) {
-    var L = x[0], mapOk = !!x[1].m, perp = mapOk ? (x[1].m[b + 'USDT'] || null) : null;
+  return Promise.all([candles(b, tf), perpMap().then(function (m) { return m; }, function () { return null; })]).then(function (x) {
+    var L = x[0], perp = x[1] ? (x[1][b + 'USDT'] || null) : null;
     var need = [tf === '1h' ? Promise.resolve({ c: [] }) : candles(b, '1h'), candles(b, '4h'), b === 'BTC' ? Promise.resolve(null) : btcBias()];
     return Promise.all(need).then(function (r) {
-      var ltf = L.c, h1 = r[0].c, h4 = r[1].c, scaled = false, block = '', k = 1;
-      var hasPerp = !!(perp && isFinite(perp.last) && perp.last > 0);
-      if (L.src === 'spot' && hasPerp) {
-        k = perp.last / ltf[ltf.length - 1].c;
-        if (k > 0.994 && k < 1.006) { ltf = scaleC(ltf, k); h1 = scaleC(h1, k); h4 = scaleC(h4, k); scaled = true; }
-        else block = 'اختلاف قیمت اسپات و پرپچوال البانک ' + (Math.abs(k - 1) * 100).toFixed(2) + '٪ هست (بیشتر از ۰.۶٪) و اعتماد به تحلیل ممکن نیست.';
-      }
-      var fb = perpCache.src === 'binance' || L.src === 'binance';
-      if (!hasPerp) block = mapOk ? 'این ارز توی بازار پرپچوال البانک پیدا نشد.' : 'قیمت پرپچوال البانک گرفته نشد.';
-      var a = E.analyze({ sym: b, tf: tf, ltf: ltf, h1: h1, h4: h4, cfg: st.cfg, balance: balance(), events: newsList(), now: Date.now(), btc: r[2] });
-      a.src = L.src; a.ts = Date.now(); a.lb = perp; a.scaled = scaled; a.k = k; a.btc = r[2];
-      a.liveP = hasPerp ? perp.last : null; a.liveAt = Date.now();
-      if (fb && !block) a.warns.unshift('اتصال به LBank برقرار نشد؛ ' + (L.src === 'binance' ? 'کندل' : 'قیمت') + ' از Binance پرپچوال گرفته شد. ورود/حد ضرر روی قیمت Binance حساب شده و با LBank معمولاً چند صدم درصد فرق داره؛ قبل از سفارش، قیمت LBank رو چک کن و برای ارزهای کم‌حجم احتیاط کن.');
-      if (block) { a.verdict = 'none'; a.warns.push(block + ' سیگنال داده نمی‌شه.'); }
+      var a = E.analyze({ sym: b, tf: tf, ltf: L.c, h1: r[0].c, h4: r[1].c, cfg: st.cfg, balance: balance(), events: newsList(), now: Date.now(), btc: r[2] });
+      a.src = 'binance'; a.ts = Date.now(); a.lb = perp; a.scaled = false; a.btc = r[2];
+      a.liveP = perp && perp.last > 0 ? perp.last : null; a.liveAt = Date.now();
+      if (!x[1]) a.warns.push('قیمت لحظه‌ای نیومد؛ فقط به کلوز کندل بسته‌شده تکیه شده.');
       return a;
     });
   });
 }
-
 function signalKey(a) { return a.verdict + ':' + (a.entry ? E.fmt(a.entry) : ''); }
 function friendlyErr(e) {
   var m = (e && e.message) ? String(e.message) : String(e);
@@ -793,19 +719,17 @@ function runList(list, label) {
 }
 
 function diagnose() {
-  var T = [['کندل اسپات البانک', function () { return spotCandles('BTC', '15m'); }],
-    ['قیمت پرپچوال البانک', function () { perpCache.at = 0; return getJSON('https://lbkperp.lbank.com/cfd/openApi/v1/pub/marketData?productGroup=SwapU', 9000); }],
-    ['Binance پرپچوال (پشتیبان)', function () { return binanceCandles('BTC', '15m'); }],
+  var T = [['Binance پرپچوال (کندل)', function () { return binanceCandles('BTC', '15m'); }],
+    ['Binance پرپچوال (قیمت لحظه‌ای)', function () { perpCache.at = 0; return perpMap(); }],
     ['فارکس‌فکتوری (اخبار)', function () { return getJSON('https://nfs.faireconomy.media/ff_calendar_thisweek.json', 8000); }]];
-  if ((st.cfg.perpUrl || '').trim()) T.splice(2, 0, ['کندل پرپچوال (آدرس سفارشی)', function () { return customCandles('BTC', '15m'); }]);
   S.diag = T.map(function (t) { return { n: t[0], st: 'run' }; }); S.diagBusy = true; S.diagNote = ''; render();
   return Promise.all(T.map(function (t, i) {
     var t0 = Date.now();
-    return t[1]().then(function () { S.diag[i] = { n: t[0], st: 'ok', ms: Date.now() - t0, via: viaOk }; }, function (e) { S.diag[i] = { n: t[0], st: 'bad', e: friendlyErr(e) }; }).then(render);
+    return t[1]().then(function () { S.diag[i] = { n: t[0], st: 'ok', ms: Date.now() - t0 }; }, function (e) { S.diag[i] = { n: t[0], st: 'bad', e: friendlyErr(e) }; }).then(render);
   })).then(function () {
     if (perpCache.map) {
       var miss = st.cfg.watch.filter(function (b) { return !perpCache.map[b + 'USDT']; });
-      S.diagNote = miss.length ? 'این ارزها توی پرپچوال البانک پیدا نشدن و سیگنال نمی‌گیرن: ' + miss.join('، ') + '. اسم‌شون رو چک کن یا از واچ‌لیست حذف‌شون کن.' : 'همه‌ی ارزهای واچ‌لیست توی پرپچوال البانک هستن.';
+      S.diagNote = miss.length ? 'این ارزها توی Binance پرپچوال نیستن و سیگنال نمی‌گیرن: ' + miss.join('، ') + '.' : 'همه‌ی ارزهای واچ‌لیست توی Binance پرپچوال هستن.';
     }
     S.diagBusy = false; render();
   });
@@ -822,7 +746,7 @@ var ICON = {
 function header() {
   var c = st.cfg, p = todayPnl(), range = c.dailyLoss + c.dailyTarget, zero = c.dailyLoss / range * 100;
   var v = Math.max(-c.dailyLoss, Math.min(c.dailyTarget, p)), w = Math.abs(v) / range * 100, left = v >= 0 ? zero : zero - w;
-  return '<div class="head"><div class="wrap"><div class="brand"><h1>رادار ترید</h1><small>فیلتر ستاپ، نه سیگنال تضمینی · نسخه ۳.۲</small></div>' +
+  return '<div class="head"><div class="wrap"><div class="brand"><h1>رادار ترید</h1><small>فیلتر ستاپ، نه سیگنال تضمینی · نسخه ۳.۳</small></div>' +
     '<div class="acct"><div class="bal">' + N(balance()) + ' <span style="font-size:13px;font-weight:400">دلار</span><small>موجودی (شروع ' + N(c.balance0, 0) + ')</small></div>' +
     '<div class="todayv ' + (p >= 0 ? 'pos' : 'neg') + '">' + '<span class="n">' + sgn(p) + '</span><small>سود/ضرر امروز</small></div></div>' +
     '<div class="meter"><div class="mtrack"><b class="mfill ' + (v >= 0 ? 'pos' : 'neg') + '" style="left:' + left.toFixed(1) + '%;width:' + w.toFixed(1) + '%"></b><i class="mzero" style="left:' + zero.toFixed(1) + '%"></i></div>' +
@@ -990,9 +914,9 @@ function ladder(tps, hit, entry, side) {
 function card(r) {
   var v = r.verdict, cls = v === 'long' ? 'buy' : v === 'short' ? 'sell' : 'none';
   var label = v === 'long' ? (r.limit ? 'خرید با لیمیت' : 'خرید') : v === 'short' ? (r.limit ? 'فروش با لیمیت' : 'فروش') : 'وارد نشو';
-  var srcTxt = r.src === 'binance' ? 'کندل Binance پرپچوال (LBank وصل نشد)' : r.scaled ? 'کندل اسپات هم‌تراز با پرپچوال' : r.src === 'perp' ? 'کندل پرپچوال' : 'کندل اسپات';
+  var srcTxt = 'Binance پرپچوال';
   var h = '<div class="card sig"><div class="sig-top"><div><span class="sym">' + esc(r.sym) + '</span> <span class="pill ' + cls + '">' + label + '</span>' + (S.fresh[r.sym] ? '<span class="pill new">جدید</span>' : '') +
-    '<div class="sub">' + 'کلوز آخرین کندل بسته‌شده ' + (r.closeT ? '(' + hhmm(r.closeT) + ') ' : '') + P(r.price) + ' · ' + esc(r.tf) + ' · ' + srcTxt + ' · ' + hhmm(r.ts) + '</div>' + (r.lb && isFinite(r.lb.last) ? '<div class="sub"><b>قیمت پرپچوال ' + (perpCache.src === 'binance' ? 'Binance' : 'البانک') + ' الان: ' + P(r.lb.last) + '</b></div>' : '') + '</div>' +
+    '<div class="sub">' + 'کلوز آخرین کندل بسته‌شده ' + (r.closeT ? '(' + hhmm(r.closeT) + ') ' : '') + P(r.price) + ' · ' + esc(r.tf) + ' · ' + srcTxt + ' · ' + hhmm(r.ts) + '</div>' + (r.lb && isFinite(r.lb.last) ? '<div class="sub"><b>قیمت پرپچوال ' + 'Binance' + ' الان: ' + P(r.lb.last) + '</b></div>' : '') + '</div>' +
     '<div class="score">امتیاز<br><b class="n">' + (r.score || 0) + '</b></div></div>';
   if (v !== 'none') {
     var z = sizeFor(r), tps = r.tps || [{ p: r.tp, r: r.rr, pct: 100 }], ex = findPos(r.sym, v);
@@ -1017,7 +941,7 @@ function dirFa(d) { return d === 'up' ? 'صعودی' : d === 'down' ? 'نزول�
 function posCard(p) {
   var lp = livePrice(p.sym), s = p.side === 'long' ? 1 : -1, R0 = Math.abs(p.entry - p.stop0) || 1e-12;
   var h = '<div class="card sig"><div class="sig-top"><div><span class="sym">' + esc(p.sym) + '</span> <span class="pill ' + (s > 0 ? 'buy' : 'sell') + '">' + (s > 0 ? 'لانگ' : 'شورت') + '</span><div class="sub">' + esc(p.tf) + ' · از ' + dayName(p.openedAt) + ' ' + hhmm(p.openedAt) + '</div></div>';
-  if (lp == null) return h + '</div><div class="sig-body"><div class="banner warn" style="margin:0">قیمت زنده‌ی پرپچوال البانک الان نیومده؛ نت رو چک کن. سود و ضرر نشون داده نمی‌شه.</div>' + posBtns(p, null) + '</div></div>';
+  if (lp == null) return h + '</div><div class="sig-body"><div class="banner warn" style="margin:0">قیمت زنده‌ی Binance الان نیومده؛ نت رو چک کن. سود و ضرر نشون داده نمی‌شه.</div>' + posBtns(p, null) + '</div></div>';
   var pn = pnlNow(p, lp), gross = (lp - p.entry) * s * p.remQty + 0, rN = (lp - p.entry) * s / R0;
   h += '<div class="score">سود/ضرر لحظه‌ای (بعد کارمزد)<br><b class="n ' + (pn >= 0 ? 'pos' : 'neg') + '" style="font-size:19px">' + sgn(pn) + ' $</b></div></div>';
   h += '<div class="lv"><div><small>قیمت پرپچوال</small><b>' + P(lp) + '</b></div><div><small>ورود</small><b>' + P(p.entry) + '</b></div><div class="sl"><small>حد ضرر فعلی</small><b>' + P(p.stop) + '</b></div></div>';
@@ -1043,7 +967,7 @@ function posBtns(p, lp) {
 }
 function tabTrades() {
   var list = openPos(), h = '';
-  h += '<div class="card"><h2>معاملات باز (' + list.length + ')</h2><div class="sub">قیمت‌ها هر ۳۰ ثانیه (پرپچوال البانک، یا Binance اگه البانک وصل نشه). ریسک باز: <b class="n">' + openRiskUsd().toFixed(2) + '</b> دلار</div></div>';
+  h += '<div class="card"><h2>معاملات باز (' + list.length + ')</h2><div class="sub">قیمت‌ها از Binance پرپچوال، هر ۳۰ ثانیه. ریسک باز: <b class="n">' + openRiskUsd().toFixed(2) + '</b> دلار</div></div>';
   h += list.length ? list.map(posCard).join('') : '<div class="empty">معامله‌ی بازی نداری. توی تب سیگنال، بعد از ورود، دکمه‌ی «وارد شدم» رو بزن تا اینجا پیگیری بشه.</div>';
   if (S.posMsg) h += '<div class="banner good">' + esc(S.posMsg) + '</div>';
   return h + tabJournal(true);
@@ -1135,13 +1059,11 @@ function tabSettings() {
     setRow('کارمزد هر سمت (٪)', 'تیکر معمولاً حدود ۰.۰۶', 'fee', c.fee) +
     setRow('حداقل امتیاز سیگنال', 'بالاتر = انتخابی‌تر', 'minScore', c.minScore) + '</div></div>';
   h += '<div class="card stack"><h2>داده و اسکن</h2>' +
-    '<div class="sub">اولویت با <b>LBank</b> هست (کندل اسپات + قیمت زنده‌ی پرپچوال). اگه مرورگر اجازه‌ی اتصال به LBank نده، اپ خودش از <b>Binance پرپچوال</b> می‌خونه و روی کارت با برچسب مشخص می‌کنه. اختلاف قیمت دو صرافی برای ارزهای بزرگ خیلی کمه، ولی قبل از سفارش قیمت LBank رو چک کن.</div>' +
-    '<label for="s_relay" class="sub">آدرس واسط شخصی (Cloudflare Worker)، اگه ساختی اینجا بذار</label><input type="text" id="s_relay" class="ltr" data-set="relay" placeholder="https://xxx.workers.dev" value="' + esc(c.relay || '') + '">' +
-    '<label for="s_perpUrl" class="sub">آدرس کندل پرپچوال (اختیاری، فقط اگه پیداش کردی)</label><input type="text" id="s_perpUrl" class="ltr" data-set="perpUrl" placeholder="https://.../kline?symbol={symbol}&type={tflb}" value="' + esc(c.perpUrl || '') + '">' +
+    '<div class="sub">همه‌ی کندل‌ها و قیمت‌ها از <b>Binance پرپچوال</b> خونده می‌شن (اتصال Binance از ایران معمولاً VPN می‌خواد). قیمت LBank با Binance کمی فرق داره؛ قبل از سفارش خودت روی چارت LBank چک کن.</div>' +
     '<label for="s_watch" class="sub">واچ‌لیست (با ویرگول جدا کن)</label><input type="text" id="s_watch" class="ltr" data-set="watch" value="' + esc(c.watch.join(', ')) + '">' +
     '<label class="switch"><input type="checkbox" id="s_scanOnOpen" data-set="scanOnOpen"' + (c.scanOnOpen ? ' checked' : '') + '><span>با باز کردن اپ، واچ‌لیست خودکار اسکن بشه</span></label>' +
     '<label class="switch"><input type="checkbox" id="s_auto" data-set="auto"' + (c.auto ? ' checked' : '') + '><span>اسکن خودکار هر ۱۵ دقیقه (وقتی اپ بازه)</span></label></div>';
-  h += '<div class="card stack"><h2>تست اتصال</h2><div class="sub">ببین از نت فعلی‌ت به کدوم منبع‌ها می‌رسه.</div><button class="btn" data-act="diag"' + (S.diagBusy ? ' disabled' : '') + '>اجرای تست</button>' + (S.diagNote ? '<div class="sub">' + esc(S.diagNote) + '</div>' : '') + '<button class="btn ghost" data-act="probe"' + (S.probeBusy ? ' disabled' : '') + '>جستجوی کندل پرپچوال البانک</button>' + (S.probe || []).map(function (x) { return '<div class="sub" style="direction:ltr;text-align:left;overflow-wrap:anywhere">' + esc(x) + '</div>'; }).join('') + (S.diag || []).map(function (d) { return '<div class="row" style="justify-content:space-between"><span>' + esc(d.n) + '</span><b class="' + (d.st === 'ok' ? 'pos' : d.st === 'bad' ? 'neg' : '') + '">' + (d.st === 'ok' ? '✓ ' + d.ms + 'ms' + (d.via ? ' (از مسیر واسط ' + d.via + ')' : '') : d.st === 'bad' ? '✗ ' + esc(d.e) : '…') + '</b></div>'; }).join('') + '</div>';
+  h += '<div class="card stack"><h2>تست اتصال</h2><div class="sub">ببین از نت فعلی‌ت به کدوم منبع‌ها می‌رسه.</div><button class="btn" data-act="diag"' + (S.diagBusy ? ' disabled' : '') + '>اجرای تست</button>' + (S.diagNote ? '<div class="sub">' + esc(S.diagNote) + '</div>' : '') + '' + (S.diag || []).map(function (d) { return '<div class="row" style="justify-content:space-between"><span>' + esc(d.n) + '</span><b class="' + (d.st === 'ok' ? 'pos' : d.st === 'bad' ? 'neg' : '') + '">' + (d.st === 'ok' ? '✓ ' + d.ms + 'ms' + (d.via ? ' (از مسیر واسط ' + d.via + ')' : '') : d.st === 'bad' ? '✗ ' + esc(d.e) : '…') + '</b></div>'; }).join('') + '</div>';
   h += '<div class="card stack"><h2>پشتیبان‌گیری</h2><div class="sub">اطلاعات فقط روی همین گوشی ذخیره می‌شه. پاک کردن داده مرورگر = از دست رفتن ژورنال. گاهی پشتیبان بگیر.</div>' +
     '<button class="btn" data-act="backup">کپی پشتیبان</button><textarea id="bk" class="ltr" placeholder="برای بازیابی، متن پشتیبان رو اینجا بچسبون"></textarea><button class="btn" data-act="restore">بازیابی از متن</button>' + (S.backupMsg ? '<div class="sub">' + esc(S.backupMsg) + '</div>' : '') + '</div>';
   return h;
@@ -1157,8 +1079,8 @@ function tabGuide() {
     sec('قدم ۴: حد ضرر و حد سود', '<ul class="why"><li>حد ضرر «مطمئن» گذاشته می‌شه: پشت ناحیه FVG (۰.۳۵ ATR) و پشت کف/سقف سه کندل اخیر (۰.۳ ATR)، هرکدوم دورتره. فاصله‌ش حداقل ۱ و حداکثر ۳.۵ برابر ATR هست تا با نویز معمولی نخوره. چون حجم از روی فاصله حساب می‌شه، استاپ دورتر یعنی حجم کمتر، نه ریسک بیشتر.</li><li>سه هدف داریم: TP1 روی ۱ برابر ریسک (۴۰٪ ببند و حد ضرر رو بیار روی ورود)، TP2 روی نزدیک‌ترین سقف/کف مهم یا ۲.۵ برابر ریسک (۳۵٪ ببند) و TP3 هدف دورتر (۲۵٪ باقی‌مونده). اگه فقط دو هدف منطقی بود، ۵۰٪/۵۰٪.</li><li>ستاپی که بعد از کارمزد ریسک به ریوارد خالصش کمتر از ۱.۷ بشه یا کارمزد بیشتر از ۳۵٪ ریسک باشه رد می‌شه.</li></ul>') +
     sec('امتیاز', '<p style="margin:0">از ۱۰۰: هم‌جهتی با روند (تا ۳۰)، کیفیت ناحیه (تا ۲۵)، تأیید (تا ۱۵)، ریسک به ریوارد (تا ۱۵)، قیمت ارزان در خرید و گران در فروش نسبت به رنج اخیر (۱۰) و نبودن خبر مهم نزدیک (۵). الان حداقل امتیاز <b class="n">' + c.minScore + '</b> هست و از تنظیمات عوض می‌شه. بالاتر یعنی انتخابی‌تر و ستاپ کمتر.</p>') +
     sec('ریسک و قفل', '<ul class="why"><li>حجم پوزیشن طوری حساب می‌شه که با رسیدن به حد ضرر (به‌علاوه کارمزد) دقیقاً <b class="n">' + c.riskPct + '٪</b> موجودی از دست بره. اگه بودجه‌ی ضرر روزانه‌ت (با احتساب ریسک معاملات باز) کمتر از این باشه، حجم خودکار کم می‌شه. سقف ریسک کل معاملات باز هم <b class="n">' + c.maxOpenRiskPct + '٪</b> هست.</li><li>ضرر امروز به <b class="n">' + c.dailyLoss + '</b> دلار برسه، اپ تا فردا قفل می‌شه.</li><li>از ۳۰ دقیقه قبل تا ۱۵ دقیقه بعد از خبرهای مهم، «وارد نشو» می‌گه.</li></ul>') +
-    sec('بعد از ورود چی؟', '<ul class="why"><li>دکمه‌ی «وارد شدم» رو بزن؛ معامله توی تب معاملات می‌مونه و سود و ضرر لحظه‌ای‌ش از قیمت پرپچوال البانک حساب می‌شه.</li><li>اپ هر ۳۰ ثانیه قیمت و هر ۲ دقیقه روند، ناحیه ورود، خبر و ستاپ مخالف رو دوباره چک می‌کنه و با دلیل می‌گه: نگه دار، حد ضرر رو ریسک‌فری کن، قسمتی رو ببند یا کامل ببند.</li><li>اپ خودش چیزی نمی‌بنده. هر کاری توی صرافی کردی، دکمه‌ش رو هم اینجا بزن.</li></ul>') +
-    sec('محدودیت‌ها', '<ul class="why w"><li>هیچ استراتژی سودی تضمین نمی‌کنه. این اپ فیلتره، نه پیش‌بینی.</li><li>توی بازار رنج یا خبری ممکنه ساعت‌ها هیچ ستاپی نباشه و این نرمال‌ه.</li><li>اگه LBank وصل بشه، کندل‌ها از اسپات البانک خونده و روی قیمت پرپچوال البانک هم‌تراز می‌شن (چون البانک کندل پرپچوال عمومی نمی‌ده) و اختلاف بیشتر از ۰.۶٪ سیگنال رو رد می‌کنه. اگه LBank وصل نشه، از Binance پرپچوال می‌خونه و روی کارت می‌نویسه.</li><li>درصد بستن و پیشنهادها راهنمان؛ تصمیم نهایی با خودته.</li><li>هنوز بک‌تست روی دیتای واقعی انجام نشده؛ چند هفته با ریسک کم و ثبت در ژورنال بسنج.</li></ul>');
+    sec('بعد از ورود چی؟', '<ul class="why"><li>دکمه‌ی «وارد شدم» رو بزن؛ معامله توی تب معاملات می‌مونه و سود و ضرر لحظه‌ای‌ش از قیمت Binance پرپچوال حساب می‌شه.</li><li>اپ هر ۳۰ ثانیه قیمت و هر ۲ دقیقه روند، ناحیه ورود، خبر و ستاپ مخالف رو دوباره چک می‌کنه و با دلیل می‌گه: نگه دار، حد ضرر رو ریسک‌فری کن، قسمتی رو ببند یا کامل ببند.</li><li>اپ خودش چیزی نمی‌بنده. هر کاری توی صرافی کردی، دکمه‌ش رو هم اینجا بزن.</li></ul>') +
+    sec('محدودیت‌ها', '<ul class="why w"><li>هیچ استراتژی سودی تضمین نمی‌کنه. این اپ فیلتره، نه پیش‌بینی.</li><li>توی بازار رنج یا خبری ممکنه ساعت‌ها هیچ ستاپی نباشه و این نرمال‌ه.</li><li>کندل و قیمت از Binance پرپچوال خونده می‌شن، نه LBank. قیمت دو صرافی برای ارزهای بزرگ خیلی نزدیکه ولی کامل یکی نیست؛ ورود و حد ضرر رو قبل از سفارش با چارت LBank مقایسه کن.</li><li>درصد بستن و پیشنهادها راهنمان؛ تصمیم نهایی با خودته.</li><li>هنوز بک‌تست روی دیتای واقعی انجام نشده؛ چند هفته با ریسک کم و ثبت در ژورنال بسنج.</li></ul>');
 }
 function tabsBar() {
   var T = [['signals', 'سیگنال', ICON.sig], ['journal', 'معاملات' + (openPos().length ? ' (' + openPos().length + ')' : ''), ICON.jr], ['news', 'اخبار', ICON.nw], ['guide', 'راهنما', ICON.gd], ['settings', 'تنظیمات', ICON.cf]];
@@ -1195,23 +1117,9 @@ function posAct(act, id) {
   }
   save(); render();
 }
-function probePerp() {
-  var now = Math.floor(Date.now() / 1000), base = 'https://lbkperp.lbank.com', u = [
-    '/cfd/openApi/v1/pub/kline?symbol=BTCUSDT&type=minute15&size=50&time=' + (now - 50 * 900),
-    '/cfd/openApi/v1/pub/marketData/kline?symbol=BTCUSDT&type=minute15&size=50&time=' + (now - 50 * 900),
-    '/cfd/openApi/v1/pub/getKline?symbol=BTCUSDT&type=minute15&size=50&time=' + (now - 50 * 900),
-    '/cfd/openApi/v1/pub/kline?productGroup=SwapU&symbol=BTCUSDT&interval=15m&limit=50',
-    '/cfd/openApi/v1/pub/instrument?productGroup=SwapU'];
-  S.probe = ['در حال تست…']; S.probeBusy = true; render();
-  Promise.all(u.map(function (p) {
-    return getJSON(base + p, 8000).then(function (d) { return '✓ ' + p.split('?')[0] + ' → ' + JSON.stringify(d).slice(0, 110); }, function (e) { return '✗ ' + p.split('?')[0] + ' → ' + friendlyErr(e); });
-  })).then(function (r) { S.probe = r; S.probeBusy = false; render(); });
-}
 function applySet(key, raw) {
   var c = st.cfg;
   if (key === 'watch') { var w = String(raw).split(/[,،\s]+/).map(baseOf).filter(Boolean); if (w.length) c.watch = w.filter(function (x, i) { return w.indexOf(x) === i; }).slice(0, 24); }
-  else if (key === 'relay') { c.relay = String(raw).trim().replace(/\/+$/, ''); cache = {}; perpCache = { at: 0, map: null, src: '' }; }
-  else if (key === 'perpUrl') { c.perpUrl = String(raw).trim(); cache = {}; }
   else if (key === 'auto' || key === 'scanOnOpen') c[key] = !!raw;
   else if (key === 'balNow') { var x = num(raw); if (isFinite(x) && x >= 0) c.balance0 = x - sumPnl(st.trades); }
   else { var y = num(raw); if (!isFinite(y)) return; var lim = { riskPct: [0.1, 5], maxOpenRiskPct: [0.1, 10], dailyLoss: [0.5, 1000], dailyTarget: [0.5, 1000], leverage: [1, 100], fee: [0, 1], minScore: [50, 95] }[key]; if (lim) c[key] = Math.max(lim[0], Math.min(lim[1], y)); }
@@ -1235,7 +1143,6 @@ document.addEventListener('click', function (e) {
   }
   else if (act === 'del') { var id = b.getAttribute('data-id'); if (S.confirmDel === id) { st.trades = st.trades.filter(function (t) { return t.id !== id; }); S.confirmDel = ''; save(); } else S.confirmDel = id; render(); }
   else if (act === 'diag') { diagnose(); }
-  else if (act === 'probe') { probePerp(); }
   else if (act === 'enter') { var rr = S.results[b.getAttribute('data-sym')], np = enterPos(rr); S.posMsg = np ? 'معامله ' + np.sym + ' ثبت شد. توی تب معاملات پیگیری می‌شه.' : 'ثبت نشد (یا قبلاً ثبت شده یا بودجه‌ی ریسک تموم شده).'; if (np) { S.tab = 'journal'; monitorPos().then(render); } render(); window.scrollTo(0, 0); }
   else if (/^p(tp|be|close|sl|del)$/.test(act)) { posAct(act, b.getAttribute('data-id')); }
   else if (act === 'newsrefresh') { S.newsErr = ''; loadNews(true).then(render); }
