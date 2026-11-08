@@ -157,6 +157,7 @@ svg.chart { width: 100%; height: auto; display: block; direction: ltr; backgroun
 .lad > div { display: grid; grid-template-columns: 52px 1fr 44px 74px; gap: 6px; align-items: center; background: var(--bg); border-radius: 8px; padding: 6px 10px; font-size: 13.5px; }
 .lad > div.done { opacity: .55; }
 .lad b { color: var(--buy); }
+.tabs button { font-size: 11.5px; }
 
 </style>
 </head>
@@ -552,7 +553,7 @@ var DEF = {
   trades: [], pos: [], manual: [], news: null
 };
 var st = load();
-var S = { tab: 'signals', results: {}, busy: '', err: '', sym: '', open: '', pol: 'win', side: 'long', prefill: '', confirmDel: '', newsErr: '', note: '', lastScan: 0, fresh: {}, backupMsg: '', an: {}, anBusy: {}, posMsg: '', confirmPos: '' };
+var S = { chkText: '', chk: null, chkErr: '', chkBusy: false, tab: 'signals', results: {}, busy: '', err: '', sym: '', open: '', pol: 'win', side: 'long', prefill: '', confirmDel: '', newsErr: '', note: '', lastScan: 0, fresh: {}, backupMsg: '', an: {}, anBusy: {}, posMsg: '', confirmPos: '' };
 
 function load() {
   var r = null;
@@ -737,6 +738,7 @@ function diagnose() {
 
 /* ---------- render pieces ---------- */
 var ICON = {
+  ck: '<svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>',
   sig: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 12 19 6"/></svg>',
   jr: '<svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M9 9h6M9 13h6"/></svg>',
   nw: '<svg viewBox="0 0 24 24"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z"/><path d="M10 21h4"/></svg>',
@@ -746,7 +748,7 @@ var ICON = {
 function header() {
   var c = st.cfg, p = todayPnl(), range = c.dailyLoss + c.dailyTarget, zero = c.dailyLoss / range * 100;
   var v = Math.max(-c.dailyLoss, Math.min(c.dailyTarget, p)), w = Math.abs(v) / range * 100, left = v >= 0 ? zero : zero - w;
-  return '<div class="head"><div class="wrap"><div class="brand"><h1>رادار ترید</h1><small>فیلتر ستاپ، نه سیگنال تضمینی · نسخه ۳.۳</small></div>' +
+  return '<div class="head"><div class="wrap"><div class="brand"><h1>رادار ترید</h1><small>فیلتر ستاپ، نه سیگنال تضمینی · نسخه ۳.۴</small></div>' +
     '<div class="acct"><div class="bal">' + N(balance()) + ' <span style="font-size:13px;font-weight:400">دلار</span><small>موجودی (شروع ' + N(c.balance0, 0) + ')</small></div>' +
     '<div class="todayv ' + (p >= 0 ? 'pos' : 'neg') + '">' + '<span class="n">' + sgn(p) + '</span><small>سود/ضرر امروز</small></div></div>' +
     '<div class="meter"><div class="mtrack"><b class="mfill ' + (v >= 0 ? 'pos' : 'neg') + '" style="left:' + left.toFixed(1) + '%;width:' + w.toFixed(1) + '%"></b><i class="mzero" style="left:' + zero.toFixed(1) + '%"></i></div>' +
@@ -758,7 +760,7 @@ function banners() {
   else if (p >= c.dailyTarget) h += '<div class="banner good"><b>هدف امروز پر شد (' + N(p) + ' دلار).</b> ادامه دادن معمولاً سود امروز رو پس می‌ده. اگه می‌خوای ادامه بدی، فقط ستاپ‌های خیلی قوی.</div>';
   openPos().forEach(function (p) {
     var a = adviseFor(p);
-    if (a && (a.level === 'crit' || a.level === 'warn')) h += '<div class="banner ' + (a.level === 'crit' ? 'lock' : 'warn') + '"><b>' + esc(p.sym) + (p.side === 'long' ? ' لانگ' : ' شورت') + ': ' + esc(a.headline || '') + '</b> (جزئیات توی تب معاملات)</div>';
+    if (a && (a.level === 'crit' || a.level === 'warn')) h += '<div class="banner ' + (a.level === 'crit' ? 'lock' : 'warn') + '"><b>' + esc(p.sym) + (isPending(p) ? ' سفارش لیمیت' : p.side === 'long' ? ' لانگ' : ' شورت') + ': ' + esc(a.headline || '') + '</b> (جزئیات توی تب معاملات)</div>';
   });
   var ns = E.newsState(newsList(), Date.now(), 30, 15);
   if (ns.block) h += '<div class="banner warn"><b>خبر مهم الان:</b> ' + esc(ns.block.title) + ' (' + hhmm(ns.block.t) + '). تا ۱۵ دقیقه بعد از خبر وارد نشو.</div>';
@@ -815,12 +817,12 @@ function sizeFor(r) {
   return z;
 }
 function findPos(sym, side) { var a = openPos(); for (var i = 0; i < a.length; i++) if (a[i].sym === sym && a[i].side === side) return a[i]; return null; }
-function enterPos(r) {
+function enterPos(r, pending) {
   if (!r || r.verdict === 'none' || findPos(r.sym, r.verdict)) return null;
   var z = sizeFor(r); if (z.blocked) return null;
   var p = { id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), sym: r.sym, side: r.verdict, tf: r.tf, entry: r.entry, stop: r.stop, stop0: r.stop,
     tps: (r.tps || [{ p: r.tp, r: r.rr, pct: 100 }]).map(function (t) { return { p: t.p, r: t.r, pct: t.pct }; }), qty: z.qty, remQty: z.qty, notional: z.notional, riskUsd: z.riskUsd,
-    fee: st.cfg.fee / 100, zone: r.zone ? { lo: r.zone.lo, hi: r.zone.hi } : null, sweepLevel: r.sweepLevel || null, openedAt: Date.now(), hit: 0, maxR: 0, realized: 0, limit: !!r.limit, lastAdv: '' };
+    fee: st.cfg.fee / 100, zone: r.zone ? { lo: r.zone.lo, hi: r.zone.hi } : null, sweepLevel: r.sweepLevel || null, openedAt: Date.now(), hit: 0, maxR: 0, realized: 0, limit: !!r.limit, status: pending ? 'pending' : 'open', lastAdv: '' };
   openPos().push(p); save(); return p;
 }
 function pnlPart(p, px, q) { var s = p.side === 'long' ? 1 : -1; return (px - p.entry) * s * q - q * p.entry * p.fee - q * px * p.fee; }
@@ -832,9 +834,10 @@ function closePart(p, px, q, note) {
 }
 function finishIfDone(p) { if (p.remQty <= p.qty * 1e-6) st.pos = openPos().filter(function (x) { return x.id !== p.id; }); }
 function trackMax() {
-  openPos().forEach(function (p) { var lp = livePrice(p.sym); if (lp == null) return; var s = p.side === 'long' ? 1 : -1, R0 = Math.abs(p.entry - p.stop0) || 1e-12; p.maxR = Math.max(p.maxR || 0, (lp - p.entry) * s / R0); });
+  openPos().forEach(function (p) { if (isPending(p)) return; var lp = livePrice(p.sym); if (lp == null) return; var s = p.side === 'long' ? 1 : -1, R0 = Math.abs(p.entry - p.stop0) || 1e-12; p.maxR = Math.max(p.maxR || 0, (lp - p.entry) * s / R0); });
 }
 function adviseFor(p) {
+  if (isPending(p)) return pendingAdvice(p);
   var lp = livePrice(p.sym); if (lp == null) return null;
   var an = S.an[p.id] || null;
   return E.advise({ pos: p, live: lp, now: Date.now(), an: an, events: newsList() });
@@ -927,7 +930,7 @@ function card(r) {
       '<div><span>حجم</span><b><span class="n">' + qtyFmt(z.qty) + '</span> ' + esc(r.sym) + '</b></div><div><span>ارزش پوزیشن</span><b>' + N(z.notional, 1) + ' دلار</b></div>' +
       '<div><span>مارجین با لورج ' + st.cfg.leverage + 'x</span><b>' + N(z.margin, 1) + ' دلار</b></div><div><span>الگو</span><b>' + esc(r.setup) + '</b></div></div>';
     if (z.warn.length) h += '<ul class="why w">' + z.warn.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>';
-    h += ex ? '<div class="banner good" style="margin:8px 0 0">✓ این معامله توی تب «معاملات» ثبت شده.</div>' : '<button class="btn main" style="width:100%;margin-top:8px"' + (z.blocked ? ' disabled' : '') + ' data-act="enter" data-sym="' + esc(r.sym) + '">✓ وارد این معامله شدم (ثبت کن)</button>';
+    h += ex ? '<div class="banner good" style="margin:8px 0 0">✓ این معامله توی تب «معاملات» ثبت شده' + (ex.status === 'pending' ? ' (سفارش لیمیت در انتظار).' : '.') + '</div>' : '<button class="btn main" style="width:100%;margin-top:8px"' + (z.blocked ? ' disabled' : '') + ' data-act="' + (r.limit ? 'enterlimit' : 'enter') + '" data-sym="' + esc(r.sym) + '">' + (r.limit ? 'سفارش لیمیت گذاشتم (پیگیری کن)' : '✓ وارد این معامله شدم (ثبت کن)') + '</button>';
   } else h += '<div class="sig-body">';
   if (r.reasons.length && v !== 'none') h += '<ul class="why">' + r.reasons.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>';
   if (r.warns.length) h += '<ul class="why w">' + r.warns.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>';
@@ -966,11 +969,162 @@ function posBtns(p, lp) {
   return h + '</div><div class="sub" style="margin-top:6px">اپ خودش چیزی نمی‌بنده؛ فقط پیشنهاد می‌ده. بعد از هر کار توی صرافی، دکمه‌ی مربوطه رو هم اینجا بزن تا حساب‌ها درست بمونه.</div>';
 }
 function tabTrades() {
-  var list = openPos(), h = '';
+  var all = openPos(), list = all.filter(function (p) { return !isPending(p); }), pend = all.filter(isPending), h = '';
   h += '<div class="card"><h2>معاملات باز (' + list.length + ')</h2><div class="sub">قیمت‌ها از Binance پرپچوال، هر ۳۰ ثانیه. ریسک باز: <b class="n">' + openRiskUsd().toFixed(2) + '</b> دلار</div></div>';
+  if (pend.length) h += '<div class="card"><h2>سفارش‌های لیمیت در انتظار (' + pend.length + ')</h2><div class="sub">هنوز پر نشدن. اپ می‌گه کِی کنسل کنی.</div></div>' + pend.map(pendCard).join('');
   h += list.length ? list.map(posCard).join('') : '<div class="empty">معامله‌ی بازی نداری. توی تب سیگنال، بعد از ورود، دکمه‌ی «وارد شدم» رو بزن تا اینجا پیگیری بشه.</div>';
   if (S.posMsg) h += '<div class="banner good">' + esc(S.posMsg) + '</div>';
   return h + tabJournal(true);
+}
+
+/* ---------- pending limit orders ---------- */
+function isPending(p) { return p.status === 'pending'; }
+function pendingAdvice(p) {
+  var lp = livePrice(p.sym); if (lp == null) return null;
+  var s = p.side === 'long' ? 1 : -1, now = Date.now(), an = S.an[p.id] || null, items = [], cancel = 0, fill = false;
+  var tf = (E.TF_SEC[p.tf] || 900) * 1000, age = (now - p.openedAt) / tf;
+  if ((lp - p.entry) * s <= 0) { fill = true; items.push('قیمت (' + P(lp) + ') به ورود رسیده؛ احتمالاً سفارشت پر شده. توی صرافی چک کن و اگه پر شده، دکمه‌ی «پر شد» رو بزن.'); }
+  if ((lp - p.stop) * s <= 0) { cancel += 2; items.push('قیمت به حد ضرر رسیده یا ازش رد شده؛ ستاپ باطله. سفارش رو کنسل کن.'); }
+  if (!fill && (lp - p.tps[0].p) * s >= 0) { cancel += 2; items.push('قیمت بدون پر شدن سفارش به TP1 رسیده؛ فرصت از دست رفته. سفارش رو کنسل کن.'); }
+  if (age >= 16) { cancel += 1; items.push('سفارش ' + Math.floor(age) + ' کندل منتظر مونده؛ ستاپ کهنه می‌شه. بهتره کنسل کنی یا دوباره اسکن کنی.'); }
+  if (p.zone && an && isFinite(an.price) && ((p.side === 'long' && an.price < p.zone.lo) || (p.side === 'short' && an.price > p.zone.hi))) { cancel += 2; items.push('یه کندل بسته‌شده ناحیه‌ی FVG رو کامل شکسته؛ ستاپ باطله. سفارش رو کنسل کن.'); }
+  if (an && an.bias && an.bias.h4 && an.bias.h4 !== (s > 0 ? 'up' : 'down') && an.bias.h4 !== 'range' && an.bias.dir && an.bias.dir !== (s > 0 ? 'up' : 'down') && an.bias.dir !== 'range') { cancel += 1; items.push('روند بالاتر الان مخالف جهت سفارشه.'); }
+  var nb = E.newsState(newsList(), now, 30, 15).block;
+  if (nb) { cancel += 1; items.push('خبر مهم نزدیکه (' + (nb.title || '') + '). توی نوسان خبر، سفارش لیمیت خطرناکه؛ بهتره کنسل کنی.'); }
+  var lvl = cancel >= 2 ? 'crit' : (fill || cancel === 1) ? 'warn' : 'ok';
+  var head = fill ? 'سفارش به ورود رسیده' : cancel >= 2 ? 'پیشنهاد: سفارش لیمیت رو کنسل کن' : cancel === 1 ? 'مراقب باش' : 'منتظر بمون';
+  if (!items.length) items.push('قیمت (' + P(lp) + ') تا ورود (' + P(p.entry) + ') ' + N(Math.abs(lp - p.entry) / Math.abs(p.entry - p.stop0), 1) + ' برابر ریسک فاصله داره. ستاپ هنوز سالمه.');
+  return { level: lvl, headline: head, items: items.map(function (t) { return { t: t }; }), fill: fill };
+}
+function pendCard(p) {
+  var lp = livePrice(p.sym), a = pendingAdvice(p), cl = a ? (a.level === 'crit' ? 'lock' : a.level === 'warn' ? 'warn' : 'good') : 'warn';
+  var h = '<div class="card sig"><div class="sig-top"><div><span class="sym">' + esc(p.sym) + '</span> <span class="pill ' + (p.side === 'long' ? 'buy' : 'sell') + '">' + (p.side === 'long' ? 'لیمیت خرید' : 'لیمیت فروش') + '</span><div class="sub">' + esc(p.tf) + ' · از ' + dayName(p.openedAt) + ' ' + hhmm(p.openedAt) + '</div></div><div class="score">قیمت الان<br><b class="n">' + (lp == null ? '-' : P(lp)) + '</b></div></div>';
+  h += '<div class="lv"><div><small>قیمت سفارش</small><b>' + P(p.entry) + '</b></div><div class="sl"><small>حد ضرر</small><b>' + P(p.stop) + '</b></div><div><small>ریسک</small><b>' + N(p.riskUsd) + ' $</b></div></div><div class="sig-body">' + ladder(p.tps, 0);
+  if (a) h += '<div class="banner ' + cl + '" style="margin:8px 0 0"><b>' + esc(a.headline) + '</b><ul class="why" style="margin-top:4px">' + a.items.map(function (x) { return '<li>' + esc(x.t) + '</li>'; }).join('') + '</ul></div>';
+  else h += '<div class="banner warn" style="margin:8px 0 0">قیمت زنده نیومده؛ نت/VPN رو چک کن.</div>';
+  h += '<div class="row" style="flex-wrap:wrap;margin-top:8px"><button class="btn small main" data-act="pfill" data-id="' + p.id + '">پر شد (وارد معامله شدم)</button><button class="btn small" data-act="pcancel" data-id="' + p.id + '">سفارش رو کنسل کردم</button></div>';
+  return h + '<div class="sub" style="margin-top:6px">سفارش لیمیت تا وقتی پر نشه ضرری نداره و توی سود و ضرر حساب نمی‌شه، ولی ریسکش توی سقف ریسک باز حساب شده.</div></div></div>';
+}
+
+/* ---------- signal checker (text) ---------- */
+function normDigits(t) {
+  return String(t || '').replace(/[۰-۹]/g, function (d) { return String(d.charCodeAt(0) - 1776); }).replace(/[٠-٩]/g, function (d) { return String(d.charCodeAt(0) - 1632); }).replace(/٫/g, '.').replace(/٬/g, ',');
+}
+function nums(str) { var m = String(str).replace(/(\d),(?=\d{3}\b)/g, '$1').match(/\d+(?:\.\d+)?/g) || []; return m.map(Number).filter(function (x) { return isFinite(x) && x > 0; }); }
+function parseSignal(raw) {
+  var t = normDigits(raw), out = { sym: '', side: '', entry: null, stop: null, tps: [], raw: t }, m;
+  var up = t.toUpperCase();
+  m = up.match(/\b([A-Z]{2,10})\s*[\/\-]?\s*USDT(?:\.P|\s*PERP)?\b/);
+  if (m) out.sym = m[1];
+  if (!out.sym) { var w = st.cfg.watch; for (var i = 0; i < w.length; i++) if (new RegExp('(^|[^A-Z])' + w[i] + '([^A-Z]|$)').test(up)) { out.sym = w[i]; break; } }
+  if (!out.sym) { m = up.match(/#\s*([A-Z]{2,10})\b/); if (m) out.sym = m[1]; }
+  var isL = /(\blong\b|\bbuy\b|خرید|لانگ|صعودی)/i.test(t), isS = /(\bshort\b|\bsell\b|فروش|شورت|نزولی)/i.test(t);
+  if (isL && !isS) out.side = 'long'; else if (isS && !isL) out.side = 'short';
+  var line = function (re) { var r = t.match(re); return r ? nums(r[1]) : []; };
+  var en = line(/(?:entry|enter|ورود(?:ی)?|قیمت ورود|buy at|sell at|@)\s*(?:zone|price|point|قیمت)?\s*[:：=\-]?\s*([\d.,\s\-–~تا]+)/i);
+  if (en.length) out.entry = en.length > 1 ? (en[0] + en[1]) / 2 : en[0];
+  var sl = line(/(?:stop\s*loss|stoploss|\bsl\b|استاپ(?:\s*لاس)?|حد\s*ضرر)\s*[:：=\-]?\s*([\d.,]+)/i);
+  if (sl.length) out.stop = sl[0];
+  var D = '(?:\\s*\\d(?![\\d.,]))?';
+  var re = new RegExp('(?:\\btp' + D + '|target' + D + '|take\\s*profit' + D + '|تارگت' + D + '|هدف' + D + '|حد\\s*سود' + D + ')\\s*[:：=\\-]?\\s*([\\d.,]+)', 'ig');
+  while ((m = re.exec(t))) { var v = nums(m[1])[0]; if (v) out.tps.push(v); }
+  if (!out.tps.length) { var tl = t.match(/(?:targets?|tps?|تارگت‌?ها|اهداف)\s*[:：=\-]?\s*([\d.,\s\-–\/|]+)/i); if (tl) out.tps = nums(tl[1]); }
+  if (out.entry && out.stop && !out.side) out.side = out.stop < out.entry ? 'long' : 'short';
+  if (out.entry && out.stop && out.side) { var wrong = out.side === 'long' ? out.stop >= out.entry : out.stop <= out.entry; if (wrong) out.sideMismatch = true; }
+  return out;
+}
+function checkSignal(sig, a) {
+  var s = sig.side === 'long' ? 1 : -1, items = [], pts = 100, hard = [];
+  var live = a.liveP != null ? a.liveP : a.price, entry = sig.entry || live, stop = sig.stop;
+  var isLimit = sig.entry ? ((entry - live) * s < -1e-12 && Math.abs(entry - live) / live > 0.0008) : false;
+  var add = function (lv, t, d) { items.push({ lv: lv, t: t }); if (d) pts -= d; };
+  if (sig.sideMismatch) hard.push('جهت با حد ضرر جور نیست (حد ضرر باید برای خرید زیر ورود و برای فروش بالای ورود باشه).');
+  var risk = Math.abs(entry - stop), atr = a.atr || 0;
+  if (!isFinite(risk) || risk <= 0) { hard.push('حد ضرر نامعتبره.'); risk = 1e-9; }
+  var sATR = atr ? risk / atr : 0;
+  if (atr) {
+    if (sATR < 0.8) add('bad', 'حد ضرر خیلی تنگه (' + N(sATR, 2) + ' ATR). با نوسان معمولی قیمت می‌خوره.', 18);
+    else if (sATR < 1) add('warn', 'حد ضرر کمی تنگه (' + N(sATR, 2) + ' ATR). اپ حداقل ۱ ATR پیشنهاد می‌کنه.', 7);
+    else if (sATR > 3.5) add('bad', 'حد ضرر خیلی دوره (' + N(sATR, 2) + ' ATR)؛ حجم خیلی کوچیک می‌شه یا ریسک به ریوارد خراب.', 12);
+    else add('good', 'فاصله‌ی حد ضرر معقوله (' + N(sATR, 2) + ' ATR).', 0);
+  }
+  var tps = sig.tps.slice().filter(function (x) { return (x - entry) * s > 0; }).sort(function (x, y) { return (x - y) * s; });
+  if (!tps.length) { add('bad', 'هدفی توی جهت درست پیدا نشد؛ ریسک به ریوارد قابل حساب نیست.', 20); }
+  var fee = entry * st.cfg.fee / 100 * 2, fullR = 0, netRR = 0;
+  if (tps.length) {
+    var last = tps[tps.length - 1], first = tps[0]; fullR = Math.abs(last - entry) / risk; netRR = (Math.abs(last - entry) - fee) / (risk + fee);
+    var r1 = Math.abs(first - entry) / risk;
+    add(netRR >= 2 ? 'good' : netRR >= 1.5 ? 'warn' : 'bad', 'ریسک به ریوارد تا آخرین هدف ۱ به ' + N(fullR, 1) + ' (بعد کارمزد ۱ به ' + N(netRR, 1) + '). TP1 روی ' + N(r1, 1) + 'R هست.', netRR >= 2 ? 0 : netRR >= 1.5 ? 8 : 22);
+    if (fee / risk > 0.35) add('bad', 'کارمزد رفت‌وبرگشت ' + N(fee / risk * 100, 0) + '٪ ریسک رو می‌خوره؛ حد ضرر برای کارمزد خیلی کوچیکه.', 12);
+    if (r1 < 0.8) add('warn', 'اولین هدف خیلی نزدیکه (' + N(r1, 1) + 'R)؛ بعد از کارمزد چیزی نمی‌مونه.', 4);
+  }
+  var dir = s > 0 ? 'up' : 'down', b = a.bias || {};
+  if (b.dir === dir) add('good', 'روند ۴ساعته/۱ساعته هم‌جهته (' + (s > 0 ? 'صعودی' : 'نزولی') + ')' + (b.strong ? ' و قویه.' : '.'), 0);
+  else if (b.dir && b.dir !== 'range') { add('bad', 'خلاف روند بالاتره (روند ' + (b.dir === 'up' ? 'صعودی' : 'نزولی') + ')' + (b.strong ? ' و قویه' : '') + '. احتمال موفقیت پایین‌تره.', b.strong ? 28 : 18); if (b.strong && netRR < 2.5) hard.push('معامله مخالف روند قوی بالاتره و ریسک به ریوارد کافی نیست.'); }
+  else add('warn', 'روند مشخص نیست (رنج)؛ دقت ستاپ‌ها پایین‌تره.', 8);
+  if (a.btc && a.sym !== 'BTC') { if (a.btc.dir === dir) add('good', 'بیت‌کوین هم‌جهته.', 0); else if (a.btc.dir && a.btc.dir !== 'range') add('warn', 'بیت‌کوین خلاف جهت توئه' + (a.btc.strong ? ' (قوی)' : '') + '؛ آلت‌کوین‌ها معمولاً دنبالش می‌رن.', a.btc.strong ? 12 : 6); }
+  var own = sig.side === 'long' ? a.sides && a.sides.long : a.sides && a.sides.short, ownOk = a.sides && (sig.side === 'long' ? a.sides.longOk : a.sides.shortOk);
+  if (a.verdict === sig.side) add('good', 'تحلیل خود اپ هم همین جهت رو می‌ده (امتیاز ' + a.score + ').', 0);
+  else if (own) add(ownOk ? 'good' : 'warn', 'نظر اپ برای این جهت: ' + own, ownOk ? 0 : 10);
+  if (!isLimit) {
+    var mv = (live - entry) * s / risk;
+    if (mv > 0.3) add('warn', 'قیمت الان (' + P(live) + ') ' + N(mv, 1) + ' برابر ریسک از ورود دور شده؛ ورود الان ریسک به ریوارد رو بدتر می‌کنه.', 10);
+    else if (mv < -0.5) add('warn', 'قیمت الان به حد ضرر نزدیک‌تر از ورود پیشنهادیه.', 8);
+    if (tps.length && (live - tps[0]) * s >= 0) hard.push('قیمت از TP1 رد شده؛ دیر شده.');
+    if ((live - stop) * s <= 0) hard.push('قیمت به حد ضرر رسیده؛ سیگنال باطل شده.');
+  } else add('good', 'ورودش پایین‌تر/بالاتر از قیمت الانه (' + P(live) + ')؛ به‌صورت سفارش لیمیت قابل گذاشتنه.', 0);
+  var nb = E.newsState(newsList(), Date.now(), 30, 15).block;
+  if (nb) { add('bad', 'خبر مهم (' + (nb.title || '') + ') نزدیکه؛ نوسان خبر استاپ رو می‌زنه.', 20); hard.push('وسط پنجره‌ی خبر مهم.'); }
+  if (a.stale) add('warn', 'داده‌ی کندل کهنه‌ست؛ قیمت‌ها دقیق نیستن.', 10);
+  pts = Math.max(0, Math.min(100, pts));
+  var verdict = hard.length ? 'no' : pts >= 75 ? 'good' : pts >= 55 ? 'ok' : 'no';
+  var head = verdict === 'good' ? 'سیگنال خوبیه' : verdict === 'ok' ? 'قابل‌قبول، با احتیاط' : 'پیشنهاد: وارد نشو';
+  hard.forEach(function (h) { items.unshift({ lv: 'bad', t: h }); });
+  var split = tps.length >= 3 ? [40, 35, 25] : tps.length === 2 ? [50, 50] : [100];
+  var tpl = tps.slice(0, 3).map(function (p, i) { return { p: p, r: Math.abs(p - entry) / risk, pct: split[i] }; });
+  if (tps.length > 3) tpl[2] = { p: tps[tps.length - 1], r: Math.abs(tps[tps.length - 1] - entry) / risk, pct: 25 };
+  return { verdict: verdict, head: head, score: Math.round(pts), items: items, entry: entry, stop: stop, tps: tpl, isLimit: isLimit, live: live, side: sig.side, sym: sig.sym, tf: a.tf, netRR: netRR, rr: fullR, atr: atr, hard: hard.length };
+}
+function runCheck() {
+  var raw = S.chkText || '', sig = parseSignal(raw);
+  S.chk = null; S.chkErr = '';
+  if (!raw.trim()) { S.chkErr = 'متن سیگنال رو بچسبون.'; return render(); }
+  var miss = [];
+  if (!sig.sym) miss.push('اسم ارز'); if (!sig.stop) miss.push('حد ضرر (SL)'); if (!sig.side) miss.push('جهت (خرید/فروش)');
+  if (miss.length) { S.chkErr = 'اینا از متن پیدا نشد: ' + miss.join('، ') + '. مثلاً بنویس: SOL لانگ، ورود 150، SL 148.9، TP1 151.2، TP2 153.'; return render(); }
+  S.chkBusy = true; render();
+  analyzeSym(sig.sym).then(function (a) {
+    if (a.liveP == null && !isFinite(a.price)) throw new Error('no data');
+    S.chk = { sig: sig, res: checkSignal(sig, a), at: Date.now(), a: { zone: a.zone || null, sweepLevel: a.sweepLevel || null } }; S.chkBusy = false; render();
+  }, function (e) { S.chkErr = 'تحلیل ' + sig.sym + ' انجام نشد: ' + friendlyErr(e) + ' (اسم ارز باید توی Binance پرپچوال باشه).'; S.chkBusy = false; render(); });
+}
+function chkSize(res) { return sizeFor({ entry: res.entry, stop: res.stop }); }
+function enterFromCheck(pending) {
+  var c = S.chk; if (!c) return null; var r = c.res; if (findPos(r.sym, r.side) || !r.tps.length || r.hard) return null;
+  var z = chkSize(r); if (z.blocked) return null;
+  var p = { id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), sym: r.sym, side: r.side, tf: r.tf, entry: r.entry, stop: r.stop, stop0: r.stop, tps: r.tps.map(function (t) { return { p: t.p, r: t.r, pct: t.pct }; }), qty: z.qty, remQty: z.qty, notional: z.notional, riskUsd: z.riskUsd, fee: st.cfg.fee / 100, zone: null, sweepLevel: null, openedAt: Date.now(), hit: 0, maxR: 0, realized: 0, limit: !!pending, status: pending ? 'pending' : 'open' };
+  openPos().push(p); save(); return p;
+}
+function tabCheck() {
+  var h = '<div class="card stack"><h2>بررسی سیگنال خودت</h2><div class="sub">متن سیگنال (از کانال، دوست یا خودت) رو بچسبون. اپ ارز، جهت، ورود، حد ضرر و تارگت‌ها رو می‌خونه و با روند، ساختار قیمت، ریسک به ریوارد، کارمزد و خبر می‌سنجه.</div>' +
+    '<textarea id="chk_text" style="direction:rtl;font-size:14px;min-height:130px" placeholder="مثلاً:&#10;SOL/USDT لانگ&#10;ورود: 150.2&#10;SL: 148.9&#10;TP1: 151.5&#10;TP2: 153">' + esc(S.chkText || '') + '</textarea>' +
+    '<button class="btn main" data-act="chk"' + (S.chkBusy ? ' disabled' : '') + '>' + (S.chkBusy ? '<span class="spin"></span>در حال بررسی…' : 'بررسی کن') + '</button>' +
+    '<div class="sub">عکس سیگنال رو اپ نمی‌تونه بخونه (بدون سرور هوش مصنوعی ممکن نیست). عکس رو توی چت با Claude بفرست تا برات بخونم و تحلیل کنم؛ بعد می‌تونی اعداد رو اینجا هم بچسبونی.</div></div>';
+  if (S.chkErr) h += '<div class="banner warn">' + esc(S.chkErr) + '</div>';
+  if (S.chk) {
+    var r = S.chk.res, cl = r.verdict === 'good' ? 'good' : r.verdict === 'ok' ? 'warn' : 'lock', z = r.hard ? null : chkSize(r), ex = findPos(r.sym, r.side);
+    h += '<div class="card sig"><div class="sig-top"><div><span class="sym">' + esc(r.sym) + '</span> <span class="pill ' + (r.side === 'long' ? 'buy' : 'sell') + '">' + (r.side === 'long' ? 'خرید' : 'فروش') + (r.isLimit ? ' (لیمیت)' : '') + '</span><div class="sub">' + esc(r.tf) + ' · قیمت Binance الان ' + P(r.live) + '</div></div><div class="score">امتیاز<br><b class="n">' + r.score + '</b></div></div>' +
+      '<div class="lv"><div><small>ورود</small><b>' + P(r.entry) + '</b></div><div class="sl"><small>حد ضرر</small><b>' + P(r.stop) + '</b></div><div><small>ریسک / ریوارد</small><b>1 : ' + N(r.rr, 1) + '</b></div></div><div class="sig-body">' +
+      '<div class="banner ' + cl + '" style="margin:0 0 8px"><b>' + r.head + '</b></div>' + (r.tps.length ? ladder(r.tps, 0) + '<div class="sub" style="margin:2px 0 6px">درصدها پیشنهاد اپه (۴۰/۳۵/۲۵ یا ۵۰/۵۰). هدف‌ها همون‌هایی‌ان که توی سیگنال بود.</div>' : '') +
+      '<ul class="why">' + r.items.map(function (x) { return '<li class="' + (x.lv === 'bad' ? 'neg' : x.lv === 'good' ? 'pos' : '') + '" style="' + (x.lv === 'warn' ? 'color:var(--warn)' : '') + '">' + esc(x.t) + '</li>'; }).join('') + '</ul>';
+    if (z) {
+      h += '<div class="kv" style="margin-top:8px"><div><span>ریسک (' + N(st.cfg.riskPct, 1) + '٪)</span><b>' + N(z.riskUsd) + ' دلار</b></div><div><span>حجم</span><b><span class="n">' + qtyFmt(z.qty) + '</span> ' + esc(r.sym) + '</b></div><div><span>ارزش پوزیشن</span><b>' + N(z.notional, 1) + ' دلار</b></div><div><span>مارجین ' + st.cfg.leverage + 'x</span><b>' + N(z.margin, 1) + ' دلار</b></div></div>';
+      if (z.warn.length) h += '<ul class="why w">' + z.warn.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>';
+      if (r.tps.length) h += ex ? '<div class="banner good" style="margin:8px 0 0">✓ این معامله قبلاً ثبت شده.</div>' : '<button class="btn main" style="width:100%;margin-top:8px"' + (z.blocked ? ' disabled' : '') + ' data-act="' + (r.isLimit ? 'chkpend' : 'chkenter') + '">' + (r.isLimit ? 'سفارش لیمیت گذاشتم (پیگیری کن)' : '✓ وارد شدم (ثبت کن)') + '</button>';
+    }
+    h += '</div></div>';
+  }
+  return h;
 }
 
 function tabSignals() {
@@ -1079,22 +1233,25 @@ function tabGuide() {
     sec('قدم ۴: حد ضرر و حد سود', '<ul class="why"><li>حد ضرر «مطمئن» گذاشته می‌شه: پشت ناحیه FVG (۰.۳۵ ATR) و پشت کف/سقف سه کندل اخیر (۰.۳ ATR)، هرکدوم دورتره. فاصله‌ش حداقل ۱ و حداکثر ۳.۵ برابر ATR هست تا با نویز معمولی نخوره. چون حجم از روی فاصله حساب می‌شه، استاپ دورتر یعنی حجم کمتر، نه ریسک بیشتر.</li><li>سه هدف داریم: TP1 روی ۱ برابر ریسک (۴۰٪ ببند و حد ضرر رو بیار روی ورود)، TP2 روی نزدیک‌ترین سقف/کف مهم یا ۲.۵ برابر ریسک (۳۵٪ ببند) و TP3 هدف دورتر (۲۵٪ باقی‌مونده). اگه فقط دو هدف منطقی بود، ۵۰٪/۵۰٪.</li><li>ستاپی که بعد از کارمزد ریسک به ریوارد خالصش کمتر از ۱.۷ بشه یا کارمزد بیشتر از ۳۵٪ ریسک باشه رد می‌شه.</li></ul>') +
     sec('امتیاز', '<p style="margin:0">از ۱۰۰: هم‌جهتی با روند (تا ۳۰)، کیفیت ناحیه (تا ۲۵)، تأیید (تا ۱۵)، ریسک به ریوارد (تا ۱۵)، قیمت ارزان در خرید و گران در فروش نسبت به رنج اخیر (۱۰) و نبودن خبر مهم نزدیک (۵). الان حداقل امتیاز <b class="n">' + c.minScore + '</b> هست و از تنظیمات عوض می‌شه. بالاتر یعنی انتخابی‌تر و ستاپ کمتر.</p>') +
     sec('ریسک و قفل', '<ul class="why"><li>حجم پوزیشن طوری حساب می‌شه که با رسیدن به حد ضرر (به‌علاوه کارمزد) دقیقاً <b class="n">' + c.riskPct + '٪</b> موجودی از دست بره. اگه بودجه‌ی ضرر روزانه‌ت (با احتساب ریسک معاملات باز) کمتر از این باشه، حجم خودکار کم می‌شه. سقف ریسک کل معاملات باز هم <b class="n">' + c.maxOpenRiskPct + '٪</b> هست.</li><li>ضرر امروز به <b class="n">' + c.dailyLoss + '</b> دلار برسه، اپ تا فردا قفل می‌شه.</li><li>از ۳۰ دقیقه قبل تا ۱۵ دقیقه بعد از خبرهای مهم، «وارد نشو» می‌گه.</li></ul>') +
+    sec('سفارش لیمیت', '<ul class="why"><li>وقتی قیمت هنوز به ناحیه‌ی FVG نرسیده، کارت «خرید/فروش با لیمیت» می‌شه و ورود روی لبه‌ی ناحیه‌ست.</li><li>«سفارش لیمیت گذاشتم» رو بزن؛ اپ سفارش رو دنبال می‌کنه و می‌گه کِی پر شده، کِی ستاپ باطل شده (شکستن ناحیه، رسیدن به TP1 بدون پر شدن، خبر، کهنه شدن بعد ۱۶ کندل) و کِی کنسل کنی.</li><li>تا وقتی پر نشه، ضرر یا سودی حساب نمی‌شه؛ فقط ریسکش توی سقف ریسک باز حساب می‌شه.</li></ul>') +
+    sec('بررسی سیگنال خودت', '<ul class="why"><li>توی تب «بررسی»، متن هر سیگنال رو بچسبون تا اپ با روند، حد ضرر نسبت به ATR، ریسک به ریوارد بعد کارمزد، بیت‌کوین و خبر بسنجه و حجم رو با ریسک ۰.۵٪ حساب کنه.</li><li>عکس رو اپ نمی‌خونه؛ عکس رو توی چت Claude بفرست.</li></ul>') +
     sec('بعد از ورود چی؟', '<ul class="why"><li>دکمه‌ی «وارد شدم» رو بزن؛ معامله توی تب معاملات می‌مونه و سود و ضرر لحظه‌ای‌ش از قیمت Binance پرپچوال حساب می‌شه.</li><li>اپ هر ۳۰ ثانیه قیمت و هر ۲ دقیقه روند، ناحیه ورود، خبر و ستاپ مخالف رو دوباره چک می‌کنه و با دلیل می‌گه: نگه دار، حد ضرر رو ریسک‌فری کن، قسمتی رو ببند یا کامل ببند.</li><li>اپ خودش چیزی نمی‌بنده. هر کاری توی صرافی کردی، دکمه‌ش رو هم اینجا بزن.</li></ul>') +
     sec('محدودیت‌ها', '<ul class="why w"><li>هیچ استراتژی سودی تضمین نمی‌کنه. این اپ فیلتره، نه پیش‌بینی.</li><li>توی بازار رنج یا خبری ممکنه ساعت‌ها هیچ ستاپی نباشه و این نرمال‌ه.</li><li>کندل و قیمت از Binance پرپچوال خونده می‌شن، نه LBank. قیمت دو صرافی برای ارزهای بزرگ خیلی نزدیکه ولی کامل یکی نیست؛ ورود و حد ضرر رو قبل از سفارش با چارت LBank مقایسه کن.</li><li>درصد بستن و پیشنهادها راهنمان؛ تصمیم نهایی با خودته.</li><li>هنوز بک‌تست روی دیتای واقعی انجام نشده؛ چند هفته با ریسک کم و ثبت در ژورنال بسنج.</li></ul>');
 }
 function tabsBar() {
-  var T = [['signals', 'سیگنال', ICON.sig], ['journal', 'معاملات' + (openPos().length ? ' (' + openPos().length + ')' : ''), ICON.jr], ['news', 'اخبار', ICON.nw], ['guide', 'راهنما', ICON.gd], ['settings', 'تنظیمات', ICON.cf]];
+  var T = [['signals', 'سیگنال', ICON.sig], ['journal', 'معاملات' + (openPos().length ? ' (' + openPos().length + ')' : ''), ICON.jr], ['check', 'بررسی', ICON.ck], ['news', 'اخبار', ICON.nw], ['guide', 'راهنما', ICON.gd], ['settings', 'تنظیمات', ICON.cf]];
   return '<nav class="tabs" aria-label="بخش‌ها">' + T.map(function (t) { return '<button data-act="tab" data-v="' + t[0] + '" class="' + (S.tab === t[0] ? 'on' : '') + '"' + (S.tab === t[0] ? ' aria-current="page"' : '') + '>' + t[2] + t[1] + '</button>'; }).join('') + '</nav>';
 }
 function view() {
-  var body = S.tab === 'signals' ? tabSignals() : S.tab === 'journal' ? tabTrades() : S.tab === 'news' ? tabNews() : S.tab === 'guide' ? tabGuide() : tabSettings();
+  var body = S.tab === 'signals' ? tabSignals() : S.tab === 'journal' ? tabTrades() : S.tab === 'check' ? tabCheck() : S.tab === 'news' ? tabNews() : S.tab === 'guide' ? tabGuide() : tabSettings();
   return header() + '<div class="wrap">' + (S.tab === 'settings' ? banners() : '') + body + '</div>' + tabsBar();
 }
 
-if (!HAS_DOM) { module.exports = { sizeFor: sizeFor, enterPos: enterPos, closePart: closePart, finishIfDone: finishIfDone, pnlNow: pnlNow, adviseFor: adviseFor, sessInfo: sessInfo, SESS: SESS, posCard: posCard, tabTrades: tabTrades, perpMap: perpMap, livePrice: livePrice, view: view, card: card, tabSignals: tabSignals, tabJournal: tabJournal, tabNews: tabNews, tabSettings: tabSettings, tabGuide: tabGuide, analyzeSym: analyzeSym, runList: runList, refreshLive: refreshLive, S: S, st: st, chartSvg: chartSvg, candles: candles }; return; }
+if (!HAS_DOM) { module.exports = { S: S, parseSignal: parseSignal, checkSignal: checkSignal, pendingAdvice: pendingAdvice, pendCard: pendCard, tabCheck: tabCheck, runCheck: runCheck, enterFromCheck: enterFromCheck, sizeFor: sizeFor, enterPos: enterPos, closePart: closePart, finishIfDone: finishIfDone, pnlNow: pnlNow, adviseFor: adviseFor, sessInfo: sessInfo, SESS: SESS, posCard: posCard, tabTrades: tabTrades, perpMap: perpMap, livePrice: livePrice, view: view, card: card, tabSignals: tabSignals, tabJournal: tabJournal, tabNews: tabNews, tabSettings: tabSettings, tabGuide: tabGuide, analyzeSym: analyzeSym, runList: runList, refreshLive: refreshLive, S: S, st: st, chartSvg: chartSvg, candles: candles }; return; }
 
 /* ---------- DOM wiring ---------- */
 function render() {
+  if (typeof document === 'undefined') return;
   var a = document.activeElement, id = a && a.id, v = a && a.value, ss = a && a.selectionStart;
   if (id === 'sym') S.sym = v;
   document.getElementById('app').innerHTML = view();
@@ -1143,6 +1300,11 @@ document.addEventListener('click', function (e) {
   }
   else if (act === 'del') { var id = b.getAttribute('data-id'); if (S.confirmDel === id) { st.trades = st.trades.filter(function (t) { return t.id !== id; }); S.confirmDel = ''; save(); } else S.confirmDel = id; render(); }
   else if (act === 'diag') { diagnose(); }
+  else if (act === 'chk') { var ta = document.getElementById('chk_text'); if (ta) S.chkText = ta.value; runCheck(); }
+  else if (act === 'chkenter' || act === 'chkpend') { var cp = enterFromCheck(act === 'chkpend'); S.posMsg = cp ? (cp.status === 'pending' ? 'سفارش لیمیت ' + cp.sym + ' ثبت شد و پیگیری می‌شه.' : 'معامله ' + cp.sym + ' ثبت شد.') : 'ثبت نشد (قبلاً ثبت شده، بودجه‌ی ریسک تموم شده یا سیگنال معتبر نیست).'; if (cp) { S.tab = 'journal'; monitorPos().then(render); } render(); window.scrollTo(0, 0); }
+  else if (act === 'enterlimit') { var rl = S.results[b.getAttribute('data-sym')], lp2 = enterPos(rl, true); S.posMsg = lp2 ? 'سفارش لیمیت ' + lp2.sym + ' ثبت شد. توی تب معاملات پیگیری می‌شه.' : 'ثبت نشد (قبلاً ثبت شده یا بودجه‌ی ریسک تموم شده).'; if (lp2) { S.tab = 'journal'; monitorPos().then(render); } render(); window.scrollTo(0, 0); }
+  else if (act === 'pfill') { var fp = openPos().filter(function (x) { return x.id === b.getAttribute('data-id'); })[0]; if (fp) { fp.status = 'open'; fp.openedAt = Date.now(); fp.maxR = 0; save(); render(); } }
+  else if (act === 'pcancel') { st.pos = openPos().filter(function (x) { return x.id !== b.getAttribute('data-id'); }); save(); render(); }
   else if (act === 'enter') { var rr = S.results[b.getAttribute('data-sym')], np = enterPos(rr); S.posMsg = np ? 'معامله ' + np.sym + ' ثبت شد. توی تب معاملات پیگیری می‌شه.' : 'ثبت نشد (یا قبلاً ثبت شده یا بودجه‌ی ریسک تموم شده).'; if (np) { S.tab = 'journal'; monitorPos().then(render); } render(); window.scrollTo(0, 0); }
   else if (/^p(tp|be|close|sl|del)$/.test(act)) { posAct(act, b.getAttribute('data-id')); }
   else if (act === 'newsrefresh') { S.newsErr = ''; loadNews(true).then(render); }
@@ -1164,6 +1326,7 @@ document.addEventListener('click', function (e) {
     render();
   }
 });
+document.addEventListener('input', function (e) { if (e.target && e.target.id === 'chk_text') S.chkText = e.target.value; });
 document.addEventListener('change', function (e) {
   var el = e.target; var k = el.getAttribute && el.getAttribute('data-set'); if (!k) return;
   applySet(k, el.type === 'checkbox' ? el.checked : el.value); render();
